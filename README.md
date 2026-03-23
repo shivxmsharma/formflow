@@ -1,148 +1,210 @@
-# FormFlow — Real-time Collaborative Form Builder
+# FormFlow
 
-A full-stack web app where authenticated users build forms collaboratively in real time, share them publicly, and collect responses with analytics.
+A real-time collaborative form builder. Create forms, invite collaborators to edit simultaneously, share with respondents, and analyse responses — all in one place.
 
-**Tech stack:** React + Vite + Tailwind · Node.js + Express · Socket.io · PostgreSQL + Sequelize · JWT Auth
+**Live demo:** https://formflow-p54h.onrender.com
 
 ---
 
-## Local Development
+## Features
+
+- **Drag-and-drop builder** — reorder fields by dragging, 8 field types supported
+- **Real-time collaboration** — multiple users edit the same form simultaneously, changes sync instantly
+- **Live presence** — see who else is editing with colored avatar indicators
+- **Live preview** — side-by-side preview panel updates as you build
+- **Public sharing** — publish a form and share a link, no login required to respond
+- **Response analytics** — bar charts for choice fields, individual response viewer
+- **JWT authentication** — secure access + refresh token flow with silent renewal
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, Vite, Tailwind CSS |
+| State management | Zustand |
+| Drag and drop | dnd-kit |
+| Real-time | Socket.io |
+| Backend | Node.js, Express |
+| Database | PostgreSQL, Sequelize ORM |
+| Auth | JWT (access + refresh tokens) |
+| Deployment | Render (single service) |
+
+---
+
+## Running Locally
 
 ### Prerequisites
 - Node.js 18+
 - PostgreSQL running locally
 
-### 1. Database
+### 1. Clone the repo
+```bash
+git clone https://github.com/shivxmsharma/formflow.git
+cd formflow
+```
+
+### 2. Create the database
 ```sql
 CREATE DATABASE formflow_db;
 ```
 
-### 2. Server
+### 3. Set up the server
 ```bash
 cd server
 npm install
 cp .env.example .env
-# Edit .env — set DB_PASSWORD and both JWT secrets
+```
+
+Edit `server/.env`:
+```env
+PORT=5000
+NODE_ENV=development
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=formflow_db
+DB_USER=postgres
+DB_PASSWORD=your_postgres_password
+JWT_ACCESS_SECRET=any_long_random_string
+JWT_REFRESH_SECRET=another_long_random_string
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+CLIENT_URL=http://localhost:5173
+```
+
+```bash
 npm run dev
 ```
 
-Server runs on `http://localhost:5000`
-
-### 3. Client
+### 4. Set up the client
 ```bash
-cd client
+cd ../client
 npm install
 npm run dev
 ```
 
-Client runs on `http://localhost:5173`
+- Client: `http://localhost:5173`
+- Server: `http://localhost:5000`
 
 ---
 
-## Deployment
+## Architecture
 
-We deploy the backend to **Render** (Web Service + PostgreSQL) and the frontend to **Vercel**.
+### Authentication flow
+```
+Login → access token (15min, stored in memory)
+      + refresh token (7 days, httpOnly cookie)
 
-### Step 1 — Push to GitHub
-Make sure your code is on GitHub. Both Render and Vercel deploy directly from it.
+Every API request → Axios attaches access token via interceptor
+401 TOKEN_EXPIRED → interceptor silently calls /refresh → retries original request
+Page reload       → initAuth() hits /refresh → restores session from cookie
+```
 
----
+### Real-time collaboration
+```
+BuilderPage mounts → socket connects → emits join_form { formId }
+Server adds socket to a room keyed by formId
+User adds a field → API saves to DB → emits field_added to room
+Other clients receive field_added → update local Zustand state instantly
+User leaves page → socket emits leave_form → removed from presence map
+```
 
-### Step 2 — Create PostgreSQL database on Render
+### Production architecture
+```
+https://formflow-p54h.onrender.com
+├── /api/*         → Express API routes
+├── /socket.io/*   → Socket.io
+└── /*             → React app (static files from client/dist)
+```
 
-1. Go to [render.com](https://render.com) → **New** → **PostgreSQL**
-2. Give it a name like `formflow-db`
-3. Choose the **Free** tier
-4. Click **Create Database**
-5. Once created, copy the **Internal Database URL** — you'll need it in Step 3
-
----
-
-### Step 3 — Deploy the server on Render
-
-1. **New** → **Web Service**
-2. Connect your GitHub repo
-3. Configure:
-
-| Setting | Value |
-|---|---|
-| **Name** | `formflow-server` |
-| **Root Directory** | `server` |
-| **Runtime** | `Node` |
-| **Build Command** | `npm install` |
-| **Start Command** | `npm start` |
-| **Plan** | Free |
-
-4. Add these **Environment Variables**:
-
-| Key | Value |
-|---|---|
-| `NODE_ENV` | `production` |
-| `DATABASE_URL` | Internal Database URL from Step 2 |
-| `JWT_ACCESS_SECRET` | Run `node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"` |
-| `JWT_REFRESH_SECRET` | Run the same command again for a different value |
-| `JWT_ACCESS_EXPIRES_IN` | `15m` |
-| `JWT_REFRESH_EXPIRES_IN` | `7d` |
-| `CLIENT_URL` | Leave blank for now — fill in after Vercel deploy |
-
-5. Click **Create Web Service**
-6. Wait for deploy — note your server URL e.g. `https://formflow-server.onrender.com`
+One Render Web Service serves everything. The build command installs dependencies and runs `vite build` — Express then serves the resulting `dist/` folder.
 
 ---
 
-### Step 4 — Deploy the frontend on Vercel
+## API Reference
 
-1. Go to [vercel.com](https://vercel.com) → **Add New Project**
-2. Import your GitHub repo
-3. Configure:
+### Auth
+| Method | Route | Description |
+|---|---|---|
+| POST | /api/auth/register | Register new user |
+| POST | /api/auth/login | Login, get tokens |
+| POST | /api/auth/refresh | Refresh access token via cookie |
+| POST | /api/auth/logout | Clear refresh token cookie |
+| GET | /api/auth/me | Get current user |
 
-| Setting | Value |
-|---|---|
-| **Root Directory** | `client` |
-| **Framework Preset** | Vite (auto-detected) |
-| **Build Command** | `npm run build` |
-| **Output Directory** | `dist` |
+### Forms
+| Method | Route | Description |
+|---|---|---|
+| GET | /api/forms | List user's forms |
+| POST | /api/forms | Create form |
+| GET | /api/forms/:id | Get form with fields |
+| PATCH | /api/forms/:id | Update title / publish |
+| DELETE | /api/forms/:id | Delete form |
 
-4. Add this **Environment Variable**:
+### Fields
+| Method | Route | Description |
+|---|---|---|
+| POST | /api/forms/:id/fields | Add field |
+| PATCH | /api/forms/:id/fields/reorder | Reorder fields after drag |
+| PATCH | /api/forms/:id/fields/:fieldId | Update field properties |
+| DELETE | /api/forms/:id/fields/:fieldId | Delete field |
 
-| Key | Value |
-|---|---|
-| `VITE_SERVER_URL` | Your Render server URL from Step 3 (no trailing slash) |
+### Public (no auth)
+| Method | Route | Description |
+|---|---|---|
+| GET | /api/public/:token | Get published form |
+| POST | /api/public/:token/submit | Submit response |
 
-5. Click **Deploy**
-6. Note your frontend URL e.g. `https://formflow.vercel.app`
-
----
-
-### Step 5 — Wire them together
-
-1. Go back to your **Render Web Service** → **Environment**
-2. Set `CLIENT_URL` to your Vercel frontend URL
-3. Click **Save Changes** — Render auto-redeploys
-
-Your app is now live. Test the full flow:
-- Register at your Vercel URL
-- Create a form, publish it
-- Open the share link in an incognito window
-- Submit a response
-- Check the responses dashboard
-
----
-
-### Important note on Render's free tier
-
-Render free web services **spin down after 15 minutes of inactivity**. The first request after sleep takes ~30 seconds to wake up. This is normal for the free tier — upgrade to a paid plan for always-on behaviour before showing it in interviews.
-
-The PostgreSQL free tier does **not** sleep and has no cold start issue.
+### Responses
+| Method | Route | Description |
+|---|---|---|
+| GET | /api/forms/:id/responses | Get responses + analytics |
 
 ---
 
-## Interview talking points
+## Key Design Decisions
 
-- **JWT**: Access token (15min, stored in memory) + refresh token (7 days, httpOnly cookie). Silent refresh via Axios interceptor on 401. Can explain why memory > localStorage for XSS safety.
-- **WebSockets**: Socket.io rooms keyed by form ID, JWT verified on handshake, Last-Write-Wins conflict resolution — deliberate choice, can explain tradeoffs vs OT/CRDT.
-- **Database**: Normalised relational schema, Sequelize ORM with associations, JSON column for dynamic field options, UUID primary keys to prevent ID enumeration.
-- **Optimistic updates**: UI updates instantly, API call fires in background. Debounce (600ms) on text inputs avoids per-keystroke API calls.
-- **Drag and drop**: dnd-kit `SortableContext` + `arrayMove`, `sort_order` persisted to DB after every drop.
-- **Security**: Server-side `canEdit()` guard on every mutation — frontend protection is UX, backend protection is actual security.
-- **Deployment decision**: Evaluated Railway vs Render, chose Render for free PostgreSQL tier and better logging. Migrated from MySQL to PostgreSQL — only 2 config changes in Sequelize since it's dialect-agnostic.
+**Why JWT over sessions?**
+Stateless — the server doesn't need to store session state. Scales horizontally without a shared session store. Two-token pattern: short-lived access token limits exposure if stolen, long-lived refresh token in httpOnly cookie is safe from XSS.
+
+**Why Last-Write-Wins for collaboration conflict resolution?**
+Simpler than Operational Transformation (OT) or CRDTs, and acceptable for this use case — form fields are discrete objects, not shared text documents. Two people editing the same field label simultaneously is rare; the last save wins. OT would be the right choice if we were building a Google Docs-style shared text editor.
+
+**Why optimistic updates?**
+UI state updates immediately on user action, API call fires in background. Combined with 600ms debounce on text inputs, this gives a fast, native-feeling editor without hammering the server on every keystroke.
+
+**Why single-server deployment?**
+Express serves both the API and the React static build from the same Render service. No CORS configuration in production, simpler deployment, one URL for everything. The tradeoff is that the frontend and backend scale together — acceptable for a project at this stage.
+
+---
+
+## Project Structure
+
+```
+formflow/
+├── client/                    # React frontend
+│   └── src/
+│       ├── api/               # Axios instances and API functions
+│       ├── components/
+│       │   ├── builder/       # FieldCard, FieldEditor, FieldPalette, etc.
+│       │   └── shared/        # Navbar, ProtectedRoute, ErrorBoundary, Skeleton
+│       ├── pages/             # Dashboard, BuilderPage, PublicForm, ResponsesPage
+│       ├── socket/            # Socket.io instance and useFormSocket hook
+│       └── store/             # Zustand stores (auth, form, socket)
+│
+└── server/                    # Express backend
+    ├── config/                # DB connection, JWT helpers
+    ├── controllers/           # auth, forms, fields, responses
+    ├── middleware/            # auth guard, error handler
+    ├── models/                # Sequelize models + associations
+    ├── routes/                # auth, forms, public
+    └── socket/                # Socket.io server and event handlers
+```
+
+---
+
+## Author
+
+**Shivam Sharma**
+Full-Stack Developer · [github.com/shivxmsharma](https://github.com/shivxmsharma)
